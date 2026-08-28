@@ -24,7 +24,7 @@ def test_outline_exposes_stable_block_addresses(sample_docx: Path):
         blocks = session.outline()
 
     assert [b.node_type for b in blocks[:3]] == ["heading", "heading", "paragraph"]
-    assert blocks[1].text_preview == "Introduction"
+    assert blocks[1].text == "Introduction"
     assert blocks[1].heading_level == 2
     assert all(b.node_id for b in blocks)
     assert len({b.node_id for b in blocks}) == len(blocks)
@@ -72,7 +72,7 @@ def test_preview_normalizes_a_raised_sdk_error(sample_docx: Path):
 def test_apply_tracked_produces_a_reviewable_change(sample_docx: Path):
     with open_document(sample_docx) as session:
         target = body_paragraphs(session)[1]
-        original = target.text_preview
+        original = target.text
 
         receipt = session.apply([EditStep("s1", target.node_id, target.node_type, text=CONCISE)])
         assert receipt["revision"]["before"] != receipt["revision"]["after"]
