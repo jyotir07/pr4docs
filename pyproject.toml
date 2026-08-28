@@ -44,6 +44,8 @@ addopts = "-m 'not contract'"
 [tool.ruff]
 src = ["src"]
 line-length = 100
+# ruff formats python blocks inside markdown; plan/spec docs are prose, leave them alone
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
