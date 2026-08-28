@@ -54,3 +54,9 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.11"
 files = ["src"]
 strict = true
+
+# superdoc ships type hints but no py.typed marker, so mypy can't read them.
+# DocumentSession is the typed boundary over it.
+[[tool.mypy.overrides]]
+module = ["superdoc", "superdoc.*"]
+ignore_missing_imports = true
