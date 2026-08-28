@@ -31,7 +31,7 @@ class Block:
     node_id: str
     node_type: str
     ordinal: int
-    text_preview: str
+    text: str
     heading_level: int | None = None
     style_id: str | None = None
 
@@ -90,7 +90,7 @@ def _blocks_from(payload: dict[str, Any]) -> list[Block]:
             node_id=str(b["nodeId"]),
             node_type=str(b["nodeType"]),
             ordinal=int(b.get("ordinal", i)),
-            text_preview=str(b.get("textPreview", "")),
+            text=str(b.get("text", b.get("textPreview", ""))),
             heading_level=b.get("headingLevel"),
             style_id=b.get("styleId"),
         )
@@ -124,7 +124,8 @@ class DocumentSession:
     # --- reading -------------------------------------------------------------
 
     def outline(self, limit: int = 500) -> list[Block]:
-        return _blocks_from(self._doc.blocks.list({"limit": limit}))
+        """Full block text, not the truncated preview — the composer rewrites from it."""
+        return _blocks_from(self._doc.blocks.list({"limit": limit, "includeText": True}))
 
     def text(self) -> str:
         return str(self._doc.get_text())
