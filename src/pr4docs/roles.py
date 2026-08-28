@@ -65,10 +65,11 @@ Write plain prose: the text goes into a Word paragraph that keeps its own format
 VALIDATOR_SYSTEM = """You check whether a set of edits actually satisfies what the user \
 asked for.
 
-You see the request and the before/after text of each change. Judge only whether the \
-request was met. Do not judge style you were not asked about. If the request specified \
-something measurable (a length, a tone, a removal), check that specifically. Be strict: \
-passing a change that ignores the request wastes the reviewer's time."""
+You see the request, the before/after text of each change, and measured length figures.
+
+Trust the measurements given to you over your own impression of how long the text looks. \
+Judge only whether the request was met — not style you were not asked about. Reject work \
+that ignored the request; do not reject work that met it."""
 
 
 def _as_op(op: str) -> StepOp:
@@ -95,10 +96,33 @@ def _render_outline(blocks: list[Block]) -> str:
 
 
 def _render_changes(changes: list[Change]) -> str:
-    return "\n\n".join(
-        f"--- change {i + 1} ---\nBEFORE: {c.before}\nAFTER: {c.after}"
-        for i, c in enumerate(changes)
-    )
+    """Lengths are measured here rather than left to the model.
+
+    Asked to judge length by eye, the validator called a 36% reduction "roughly the same
+    length as before". It is the same category error as asking the composer to do
+    arithmetic: code measures, the model judges whether the measurement satisfies the ask.
+    """
+    parts = []
+    for i, c in enumerate(changes, 1):
+        measured = (
+            f"{(1 - len(c.after) / len(c.before)) * 100:.0f}% shorter" if c.before else "new text"
+        )
+        parts.append(
+            f"--- change {i} ---\n"
+            f"BEFORE ({len(c.before)} chars): {c.before}\n"
+            f"AFTER ({len(c.after)} chars): {c.after}\n"
+            f"MEASURED: {measured}"
+        )
+
+    before_total = sum(len(c.before) for c in changes)
+    after_total = sum(len(c.after) for c in changes)
+    if before_total:
+        overall = (1 - after_total / before_total) * 100
+        parts.append(
+            f"OVERALL across all edited text: {before_total} -> {after_total} characters "
+            f"({overall:.0f}% shorter)"
+        )
+    return "\n\n".join(parts)
 
 
 @dataclass
@@ -141,13 +165,29 @@ class LLMPlanner:
 class LLMComposer:
     model: BaseChatModel = field(default_factory=get_model)
 
-    def __call__(self, *, request: str, instruction: str, current_text: str) -> str:
+    def __call__(
+        self,
+        *,
+        request: str,
+        instruction: str,
+        current_text: str,
+        feedback: str | None = None,
+        previous_text: str | None = None,
+    ) -> str:
         chain = self.model.with_retry(stop_after_attempt=RETRY_ATTEMPTS)
         user = (
             f"OVERALL REQUEST (for context):\n{request}\n\n"
             f"INSTRUCTION FOR THIS BLOCK:\n{instruction}\n\n"
-            f"CURRENT TEXT:\n{current_text}"
+            f"CURRENT TEXT ({len(current_text)} characters):\n{current_text}"
         )
+        if feedback:
+            user += "\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED:"
+            if previous_text:
+                # the concrete lengths matter: told only "too long", the model trims a
+                # few words and lands in the same place it was just rejected for
+                user += f"\nYou wrote ({len(previous_text)} characters):\n{previous_text}"
+            user += f"\nReason: {feedback}\nGo further this time."
+
         response = chain.invoke([("system", COMPOSER_SYSTEM), ("user", user)])
         return str(response.content).strip()
 

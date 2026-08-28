@@ -91,6 +91,8 @@ def test_composer_receives_the_full_block_text(store, tmp_path):
         {
             "instruction": "Trim it.",
             "current_text": "Throughout the quarter the team maintained a steady cadence.",
+            "feedback": None,
+            "previous_text": None,
         }
     ]
 
@@ -105,6 +107,27 @@ def test_preview_failure_routes_back_to_the_planner(store, tmp_path):
     assert "TARGET_NOT_FOUND" in planner.calls[1]
     assert paused["status"] == "awaiting_approval"
     assert paused["attempts"] == 2
+
+
+def test_composer_hears_why_its_last_attempt_was_rejected(store, tmp_path):
+    """A validator rejection is a complaint about the TEXT, so the component that wrote
+    the text has to hear it. Feeding it only to the planner cannot converge: the planner
+    re-emits the same instruction and the composer repeats itself."""
+    composer = ScriptedComposer()
+    deps = make_deps(
+        store,
+        ScriptedPlanner([[edit("s1", "b4")]]),
+        ScriptedValidator([failing("only 5% shorter"), passing()]),
+        composer=composer,
+        tmp_path=tmp_path,
+    )
+    run(deps)
+
+    assert len(composer.calls) == 2
+    assert composer.calls[0]["feedback"] is None
+    assert composer.calls[0]["previous_text"] is None
+    assert "only 5% shorter" in composer.calls[1]["feedback"]
+    assert composer.calls[1]["previous_text"] == "A concise rewrite."
 
 
 def test_semantic_failure_routes_back_to_the_planner(store, tmp_path):

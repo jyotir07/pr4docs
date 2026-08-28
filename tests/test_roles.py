@@ -99,6 +99,25 @@ def test_composer_sees_the_full_block_text_and_strips_the_reply():
 
     assert text == "A tighter paragraph."
     assert "Long original." in model.prompts[0][-1][1]
+    assert "PREVIOUS ATTEMPT" not in model.prompts[0][-1][1]
+
+
+def test_composer_is_told_what_it_wrote_before_and_why_it_failed():
+    model = StubModel(StubResponse("Much shorter."))
+    LLMComposer(model)(
+        request="make it 40% shorter",
+        instruction="Trim it.",
+        current_text="The original paragraph, which is fairly long.",
+        feedback="only 5% shorter",
+        previous_text="A barely shorter paragraph.",
+    )
+
+    prompt = model.prompts[0][-1][1]
+    assert "YOUR PREVIOUS ATTEMPT WAS REJECTED" in prompt
+    assert "A barely shorter paragraph." in prompt
+    assert "only 5% shorter" in prompt
+    # concrete lengths, not just "too long"
+    assert "(27 characters)" in prompt
 
 
 def test_validator_fails_without_calling_the_model_when_nothing_changed():
@@ -117,4 +136,21 @@ def test_validator_maps_the_models_verdict():
 
     assert not verdict.passed
     assert verdict.reason == "only 5% shorter"
-    assert "BEFORE: before text" in model.prompts[0][-1][1]
+    assert "before text" in model.prompts[0][-1][1]
+
+
+def test_validator_is_given_measured_lengths_not_asked_to_eyeball_them():
+    model = StubModel(_ValidationOut(passed=True, reason="ok"))
+    changes = [
+        Change("c1", "replacement", "x" * 200, "y" * 120, "b1", "CLI"),
+        Change("c2", "replacement", "x" * 100, "y" * 80, "b2", "CLI"),
+    ]
+
+    LLMValidator(model)(request="make it shorter", changes=changes)
+
+    prompt = model.prompts[0][-1][1]
+    assert "BEFORE (200 chars)" in prompt
+    assert "MEASURED: 40% shorter" in prompt
+    assert "MEASURED: 20% shorter" in prompt
+    # the section-wide figure is what a request like "40% shorter" actually refers to
+    assert "300 -> 200 characters (33% shorter)" in prompt

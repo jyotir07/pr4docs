@@ -70,10 +70,11 @@ def make_plan(deps: Deps) -> Node:
         # Deliberately not filtering out unknown node_ids here. Preview is free, local,
         # and atomic, so it is the one place that judges a plan — and routing a
         # hallucinated block back through it is exactly what the retry loop is for.
+        # revise_feedback is deliberately NOT cleared here: compose runs after this node
+        # and needs to know why the last attempt was rejected. validate clears it on success.
         return {
             "plan": [asdict(e) for e in edits],
             "attempts": state.get("attempts", 0) + 1,
-            "revise_feedback": None,
             "preview_failures": [],
         }
 
@@ -83,6 +84,11 @@ def make_plan(deps: Deps) -> Node:
 def make_compose(deps: Deps) -> Node:
     def compose(state: PR4DocsState) -> dict[str, Any]:
         by_id = {b.node_id: b for b in _blocks(state)}
+        # steps still hold the rejected attempt's text at this point, which is what lets
+        # the composer see what it wrote last time rather than starting from scratch
+        previous = {s["node_id"]: s["text"] for s in state.get("steps", [])}
+        feedback = state.get("revise_feedback")
+
         steps = []
         for raw in state.get("plan", []):
             edit = PlannedEdit(**raw)
@@ -91,6 +97,8 @@ def make_compose(deps: Deps) -> Node:
                 request=state["request"],
                 instruction=edit.instruction,
                 current_text=block.text if block else "",
+                feedback=feedback,
+                previous_text=previous.get(edit.node_id),
             )
             steps.append(
                 asdict(

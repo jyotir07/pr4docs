@@ -162,8 +162,15 @@ class ScriptedComposer:
     text: str = "A concise rewrite."
     calls: list[dict] = field(default_factory=list)
 
-    def __call__(self, *, request, instruction, current_text):
-        self.calls.append({"instruction": instruction, "current_text": current_text})
+    def __call__(self, *, request, instruction, current_text, feedback, previous_text):
+        self.calls.append(
+            {
+                "instruction": instruction,
+                "current_text": current_text,
+                "feedback": feedback,
+                "previous_text": previous_text,
+            }
+        )
         return self.text
 
 
