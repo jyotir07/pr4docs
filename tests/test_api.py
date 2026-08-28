@@ -130,6 +130,25 @@ def test_the_pause_survives_a_restart(deps, settings, sample_docx):
         assert second.get(f"/jobs/{thread_id}/download").status_code == 200
 
 
+def test_app_starts_when_no_storage_directory_exists_yet(store, sample_docx, tmp_path):
+    """First run on a clean machine: sqlite will not create intermediate directories."""
+    fresh = Settings(
+        storage=tmp_path / "nope" / "storage",
+        checkpoint_db=tmp_path / "nope" / "db" / "checkpoints.sqlite",
+        max_attempts=3,
+    )
+    deps = Deps(
+        planner=ScriptedPlanner([[edit("s1", "b4")]]),
+        composer=ScriptedComposer(),
+        validator=ScriptedValidator([passing()]),
+        open_document=store.opener(),
+        settings=fresh,
+    )
+
+    with TestClient(create_app(deps=deps, settings=fresh)) as fresh_client:
+        assert upload(fresh_client, sample_docx).status_code == 200
+
+
 def test_unknown_job_is_404(client):
     assert client.get("/jobs/nope").status_code == 404
     assert client.post("/jobs/nope/decision", json={"approved": True}).status_code == 404

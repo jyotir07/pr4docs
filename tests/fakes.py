@@ -131,6 +131,9 @@ class FakeSession:
         return {"success": True}
 
     def save(self, out: Path) -> Path:
+        # the real engine writes a .docx here, and the download endpoint serves it
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"PK\x03\x04fake-docx")
         self._store.saved.append(str(out))
         self._store.docs[str(out)] = FakeDoc(
             blocks=list(self._doc.blocks), changes=list(self._doc.changes)

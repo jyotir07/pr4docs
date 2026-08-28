@@ -12,10 +12,11 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, cast
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
@@ -56,7 +57,7 @@ def _view(thread_id: str, state: PR4DocsState) -> JobView:
     )
 
 
-def _config(thread_id: str) -> dict[str, Any]:
+def _config(thread_id: str) -> RunnableConfig:
     return {"configurable": {"thread_id": thread_id}}
 
 
@@ -64,13 +65,23 @@ def _load(graph: Compiled, thread_id: str) -> PR4DocsState:
     state = graph.get_state(_config(thread_id)).values
     if not state:
         raise HTTPException(404, f"no job {thread_id}")
-    return state  # type: ignore[no-any-return]
+    return cast(PR4DocsState, state)
 
 
 def open_checkpointer(settings: Settings) -> SqliteSaver:
+    # sqlite will not create intermediate directories, and a missing one fails startup
+    # with a bare "unable to open database file"
+    settings.checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
     # check_same_thread=False is safe here: SqliteSaver guards writes with its own lock,
     # and sync endpoints run in starlette's threadpool rather than the event loop
     return SqliteSaver(sqlite3.connect(settings.checkpoint_db, check_same_thread=False))
+
+
+def get_graph(request: Request) -> Compiled:
+    """Module level on purpose: `from __future__ import annotations` makes FastAPI
+    resolve Annotated[..., Depends(get_graph)] from a string, which cannot see a
+    function nested inside create_app."""
+    return cast(Compiled, request.app.state.graph)
 
 
 def create_app(
@@ -85,24 +96,21 @@ def create_app(
         # imported here so the app can be built with fakes without needing an API key
         from pr4docs.roles import build_deps
 
+        resolved_settings.ensure_dirs()
         saver = checkpointer or open_checkpointer(resolved_settings)
         app.state.graph = build_graph(deps or build_deps(), checkpointer=saver)
         app.state.settings = resolved_settings
-        resolved_settings.ensure_dirs()
         yield
 
     app = FastAPI(title="PR4Docs", lifespan=lifespan)
-
-    def get_graph(request: Request) -> Compiled:
-        return request.app.state.graph  # type: ignore[no-any-return]
 
     # sync def, not async: graph.invoke blocks on an editor subprocess and LLM calls, so
     # starlette runs it in a worker thread instead of stalling the event loop
     @app.post("/jobs", response_model=JobView)
     def create_job(
-        file: UploadFile = File(...),
-        request: str = Form(..., min_length=1),
-        graph: Compiled = Depends(get_graph),
+        file: Annotated[UploadFile, File()],
+        request: Annotated[str, Form(min_length=1)],
+        graph: Annotated[Compiled, Depends(get_graph)],
     ) -> JobView:
         if not (file.filename or "").lower().endswith(".docx"):
             raise HTTPException(415, "only .docx is supported")
@@ -119,32 +127,36 @@ def create_app(
         source.write_bytes(payload)
 
         state = graph.invoke(initial_state(str(source), request), _config(thread_id))
-        return _view(thread_id, state)
+        return _view(thread_id, cast(PR4DocsState, state))
 
     @app.get("/jobs/{thread_id}", response_model=JobView)
-    def read_job(thread_id: str, graph: Compiled = Depends(get_graph)) -> JobView:
+    def read_job(thread_id: str, graph: Annotated[Compiled, Depends(get_graph)]) -> JobView:
         return _view(thread_id, _load(graph, thread_id))
 
     @app.post("/jobs/{thread_id}/decision", response_model=JobView)
     def decide(
-        thread_id: str, decision: Decision, graph: Compiled = Depends(get_graph)
+        thread_id: str, decision: Decision, graph: Annotated[Compiled, Depends(get_graph)]
     ) -> JobView:
         state = _load(graph, thread_id)
         if state.get("status") != "awaiting_approval":
-            raise HTTPException(409, f"job {thread_id} is {state.get('status')}, not awaiting review")
+            raise HTTPException(
+                409, f"job {thread_id} is {state.get('status')}, not awaiting review"
+            )
 
         resumed = graph.invoke(
             Command(resume={"approved": decision.approved, "feedback": decision.feedback}),
             _config(thread_id),
         )
-        return _view(thread_id, resumed)
+        return _view(thread_id, cast(PR4DocsState, resumed))
 
     @app.get("/jobs/{thread_id}/download")
-    def download(thread_id: str, graph: Compiled = Depends(get_graph)) -> FileResponse:
+    def download(thread_id: str, graph: Annotated[Compiled, Depends(get_graph)]) -> FileResponse:
         state = _load(graph, thread_id)
         output = state.get("output_path")
         if not output:
-            raise HTTPException(409, f"job {thread_id} is {state.get('status')}; nothing to download")
+            raise HTTPException(
+                409, f"job {thread_id} is {state.get('status')}; nothing to download"
+            )
 
         path = Path(output)
         if not path.exists():
