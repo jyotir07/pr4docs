@@ -42,6 +42,8 @@ class FakeDocumentStore:
     docs: dict[str, FakeDoc] = field(default_factory=dict)
     opened: list[str] = field(default_factory=list)
     saved: list[str] = field(default_factory=list)
+    autoseed: bool = False
+    """For API tests, where the upload path is a uuid this store cannot know in advance."""
 
     def seed(self, path: Path, blocks: list[Block] | None = None) -> None:
         chosen = DEFAULT_BLOCKS if blocks is None else blocks
@@ -52,7 +54,9 @@ class FakeDocumentStore:
         def _open(path: Path) -> Iterator[FakeSession]:
             key = str(path)
             if key not in self.docs:
-                raise DocumentError(f"no such document: {key}")
+                if not self.autoseed:
+                    raise DocumentError(f"no such document: {key}")
+                self.seed(path)
             self.opened.append(key)
             # the real session closes with discard=True, so edits reach disk only via
             # save(); the session works on a copy to model that
@@ -127,6 +131,9 @@ class FakeSession:
         return {"success": True}
 
     def save(self, out: Path) -> Path:
+        # the real engine writes a .docx here, and the download endpoint serves it
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"PK\x03\x04fake-docx")
         self._store.saved.append(str(out))
         self._store.docs[str(out)] = FakeDoc(
             blocks=list(self._doc.blocks), changes=list(self._doc.changes)
@@ -155,8 +162,15 @@ class ScriptedComposer:
     text: str = "A concise rewrite."
     calls: list[dict] = field(default_factory=list)
 
-    def __call__(self, *, request, instruction, current_text):
-        self.calls.append({"instruction": instruction, "current_text": current_text})
+    def __call__(self, *, request, instruction, current_text, feedback, previous_text):
+        self.calls.append(
+            {
+                "instruction": instruction,
+                "current_text": current_text,
+                "feedback": feedback,
+                "previous_text": previous_text,
+            }
+        )
         return self.text
 
 

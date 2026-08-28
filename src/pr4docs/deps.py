@@ -40,7 +40,22 @@ class EditPlanner(Protocol):
 
 
 class TextComposer(Protocol):
-    def __call__(self, *, request: str, instruction: str, current_text: str) -> str: ...
+    def __call__(
+        self,
+        *,
+        request: str,
+        instruction: str,
+        current_text: str,
+        feedback: str | None,
+        previous_text: str | None,
+    ) -> str:
+        """`feedback` and `previous_text` are set when a prior attempt was rejected.
+
+        A validator rejection is a complaint about the prose, so it has to reach the
+        component that wrote the prose. Routing it only to the planner cannot converge:
+        the planner re-emits the same instruction and the composer repeats itself.
+        """
+        ...
 
 
 class ResultValidator(Protocol):
