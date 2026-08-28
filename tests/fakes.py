@@ -42,6 +42,8 @@ class FakeDocumentStore:
     docs: dict[str, FakeDoc] = field(default_factory=dict)
     opened: list[str] = field(default_factory=list)
     saved: list[str] = field(default_factory=list)
+    autoseed: bool = False
+    """For API tests, where the upload path is a uuid this store cannot know in advance."""
 
     def seed(self, path: Path, blocks: list[Block] | None = None) -> None:
         chosen = DEFAULT_BLOCKS if blocks is None else blocks
@@ -52,7 +54,9 @@ class FakeDocumentStore:
         def _open(path: Path) -> Iterator[FakeSession]:
             key = str(path)
             if key not in self.docs:
-                raise DocumentError(f"no such document: {key}")
+                if not self.autoseed:
+                    raise DocumentError(f"no such document: {key}")
+                self.seed(path)
             self.opened.append(key)
             # the real session closes with discard=True, so edits reach disk only via
             # save(); the session works on a copy to model that
