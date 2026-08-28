@@ -9,7 +9,7 @@ exactly what runs in production.
 """
 
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,11 +33,39 @@ def bar(title):
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
 
 
+@dataclass
+class Attempt:
+    n: int
+    blocks: int = 0
+    saw_feedback: bool = False
+    before: int = 0
+    after: int = 0
+    passed: bool | None = None
+    reason: str = ""
+
+
+@dataclass
+class Recorder:
+    """One row per attempt. `saw_feedback` is the variable the whole retry design turns
+    on, so it sits next to the reduction it is supposed to move."""
+
+    attempts: list[Attempt] = field(default_factory=list)
+
+    def start(self):
+        self.attempts.append(Attempt(n=len(self.attempts) + 1))
+
+    @property
+    def current(self):
+        return self.attempts[-1]
+
+
 class LoggingPlanner:
-    def __init__(self, inner):
+    def __init__(self, inner, rec):
         self.inner = inner
+        self.rec = rec
 
     def __call__(self, *, request, outline, feedback):
+        self.rec.start()
         bar(f"PLANNER  (feedback={feedback!r})")
         print("outline the planner sees:")
         for b in outline:
@@ -51,10 +79,13 @@ class LoggingPlanner:
 
 
 class LoggingComposer:
-    def __init__(self, inner):
+    def __init__(self, inner, rec):
         self.inner = inner
+        self.rec = rec
 
     def __call__(self, *, request, instruction, current_text, feedback=None, previous_text=None):
+        self.rec.current.blocks += 1
+        self.rec.current.saw_feedback = feedback is not None
         out = self.inner(
             request=request,
             instruction=instruction,
@@ -74,11 +105,17 @@ class LoggingComposer:
 
 
 class LoggingValidator:
-    def __init__(self, inner):
+    def __init__(self, inner, rec):
         self.inner = inner
+        self.rec = rec
 
     def __call__(self, *, request, changes):
         verdict = self.inner(request=request, changes=changes)
+        # measured off what actually landed in the document, not what the composer returned
+        self.rec.current.before = sum(len(c.before) for c in changes)
+        self.rec.current.after = sum(len(c.after) for c in changes)
+        self.rec.current.passed = verdict.passed
+        self.rec.current.reason = verdict.reason
         bar("VALIDATOR")
         for c in changes:
             d = (1 - len(c.after) / len(c.before)) * 100 if c.before else 0
@@ -89,16 +126,52 @@ class LoggingValidator:
         return verdict
 
 
+ROW = "  {:>7}  {:>6}  {:>8}  {:>15}  {:>7}  {}"
+
+
+def print_summary(rec, result):
+    bar("SUMMARY")
+    print(ROW.format("attempt", "blocks", "feedback", "before -> after", "overall", "verdict"))
+    print("  " + "-" * 76)
+
+    for a in rec.attempts:
+        if a.passed is None:
+            verdict = "no verdict (rejected before validation)"
+        elif a.passed:
+            verdict = "pass"
+        else:
+            verdict = f"reject: {a.reason}"
+        # the full reason is already in the VALIDATOR block above; keep the row narrow
+        # enough to screenshot
+        if len(verdict) > 40:
+            verdict = verdict[:39].rsplit(" ", 1)[0] + "..."
+        print(
+            ROW.format(
+                a.n,
+                a.blocks,
+                "yes" if a.saw_feedback else "no",
+                f"{a.before} -> {a.after}" if a.before else "-",
+                f"{(1 - a.after / a.before) * 100:.1f}%" if a.before else "-",
+                verdict[:40],
+            )
+        )
+
+    print(f"\n  outcome: {result.get('status')} after {result.get('attempts')} attempt(s)")
+    for e in result.get("errors", []):
+        print(f"  error  : {e}")
+
+
 def main():
     tmp = Path(tempfile.mkdtemp())
     docx = write_sample_docx(tmp / "sample.docx")
 
+    rec = Recorder()
     base = build_deps()
     deps = replace(
         base,
-        planner=LoggingPlanner(base.planner),
-        composer=LoggingComposer(base.composer),
-        validator=LoggingValidator(base.validator),
+        planner=LoggingPlanner(base.planner, rec),
+        composer=LoggingComposer(base.composer, rec),
+        validator=LoggingValidator(base.validator, rec),
         settings=Settings(storage=tmp, max_attempts=3),
     )
 
@@ -107,11 +180,7 @@ def main():
         initial_state(str(docx), REQUEST), {"configurable": {"thread_id": "diag"}}
     )
 
-    bar("OUTCOME")
-    print("status  :", result.get("status"))
-    print("attempts:", result.get("attempts"))
-    for e in result.get("errors", []):
-        print("error   :", e)
+    print_summary(rec, result)
 
 
 if __name__ == "__main__":
