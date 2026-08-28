@@ -84,6 +84,10 @@ The fix was to route validator feedback to the composer along with *what it wrot
 
 The concrete previous attempt matters as much as the reason. Told only "too long," a model trims a few words and lands right back where it was rejected.
 
+![The same instrumentation after the fix: the composer is handed the rejection and its own previous attempt, and the second pass clears the bar](images/converging-run.png)
+
+*The instrumentation script is in the repo at `scripts/diagnose.py`. It wraps the three roles rather than replacing them, so what it prints is what production runs.*
+
 ### 2. Code measures; the model judges
 
 With feedback routed correctly, a second failure surfaced. The validator looked at a **36% reduction** and called it *"roughly the same length as before."*
