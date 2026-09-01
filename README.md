@@ -1,7 +1,5 @@
 # PR4Docs
-
 Pull requests, for Word documents.
-
 Upload a `.docx`, describe the change you want in plain English, and get back a diff to review. Approve it and download the edited file; reject it with a note and the agent tries again. Every proposal is written into the document as **native Word tracked changes**, so the redline you review is the same one Word shows.
 
 Built on LangGraph (the state machine, the retry loop, the human-in-the-loop pause) and the SuperDoc SDK (document addressing, atomic mutation plans, tracked changes).
