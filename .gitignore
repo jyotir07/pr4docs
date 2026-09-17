@@ -12,5 +12,4 @@ build/
 
 # runtime artifacts: uploads, tracked-change working copies, finalized output
 storage/
-!storage/.gitkeep
 *.sqlite*
