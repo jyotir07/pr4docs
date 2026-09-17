@@ -1,5 +1,7 @@
 # PR4Docs — Build Plan (MVP)
 
+> **Historical.** Written before any code existed and kept for the design reasoning; details diverged during the build, so `README.md` and `docs/case-study.md` describe what actually shipped.
+
 ## Context
 
 `pr4docs_langgraph_project.md` specifies an AI document-editing agent: upload a `.docx`, describe a change in English, review a diff, approve, download. The repo is currently empty except that spec — this is greenfield.
