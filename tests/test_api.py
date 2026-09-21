@@ -3,6 +3,7 @@ requests and surviving a restart of the app."""
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -163,6 +164,51 @@ def test_deciding_twice_is_rejected(client, sample_docx):
 
     assert second.status_code == 409
     assert "finalized" in second.json()["detail"]
+
+
+def test_a_decision_while_another_is_running_is_rejected(store, settings, sample_docx):
+    """The status stays awaiting_approval while a reject re-plans, so the status check
+    alone lets a second decision through — and LangGraph, finding no interrupt to
+    resume, silently runs a second revision instead of honouring it."""
+    replanning = threading.Event()
+    release = threading.Event()
+
+    def planner(*, request, outline, feedback):
+        if feedback is not None:
+            replanning.set()
+            release.wait(10)
+        return [edit("s1", "b4")]
+
+    deps = Deps(
+        planner=planner,
+        composer=ScriptedComposer(),
+        validator=ScriptedValidator([passing()]),
+        open_document=store.opener(),
+        settings=settings,
+    )
+
+    with TestClient(create_app(deps=deps, settings=settings)) as client:
+        thread_id = upload(client, sample_docx).json()["thread_id"]
+        rejected: dict[str, int] = {}
+
+        def reject() -> None:
+            response = client.post(
+                f"/jobs/{thread_id}/decision", json={"approved": False, "feedback": "no"}
+            )
+            rejected["status_code"] = response.status_code
+
+        worker = threading.Thread(target=reject)
+        worker.start()
+        try:
+            assert replanning.wait(10)
+            concurrent = client.post(f"/jobs/{thread_id}/decision", json={"approved": True})
+        finally:
+            release.set()
+            worker.join(10)
+
+    assert concurrent.status_code == 409
+    assert "in progress" in concurrent.json()["detail"]
+    assert rejected["status_code"] == 200
 
 
 def test_downloading_before_approval_is_rejected(client, sample_docx):
