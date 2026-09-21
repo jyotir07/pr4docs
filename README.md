@@ -72,7 +72,7 @@ On Windows PowerShell, `curl` is an alias for `Invoke-WebRequest`, which takes d
 | `POST` | `/jobs/{thread_id}/decision` | `{approved: bool, feedback?: str}`. Resumes the paused graph. |
 | `GET` | `/jobs/{thread_id}/download` | The finalized `.docx`. |
 
-Errors: `415` on a non-`.docx`, `413` over 25 MB, `400` on an empty file, `404` on an unknown job, `409` when deciding on a job that isn't awaiting review or downloading one that isn't finished, `410` if the output file has been deleted.
+Errors: `415` on a non-`.docx`, `413` over 25 MB, `400` on an empty file, `404` on an unknown job, `409` when deciding on a job that isn't awaiting review or already has a decision in progress, or downloading one that isn't finished, `410` if the output file has been deleted.
 
 A job that exhausts its retries ends with `status: "failed"` and the reasons in `errors`.
 
@@ -144,7 +144,7 @@ Two seams make the whole thing testable. `docs/superdoc.py` is the single bounda
 ## Development
 
 ```bash
-uv run pytest                 # 33 tests, no API key, no subprocess, ~seconds
+uv run pytest                 # 34 tests, no API key, no subprocess, ~seconds
 uv run pytest -m contract     # 8 tests against the real SuperDoc SDK; slow
 uv run pytest -m live         # 2 tests against the real LLM; costs money
 uv run ruff check . && uv run ruff format --check .

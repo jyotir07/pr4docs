@@ -8,6 +8,7 @@ in this process between those calls — it is all in the checkpointer.
 from __future__ import annotations
 
 import sqlite3
+import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -104,6 +105,12 @@ def create_app(
 
     app = FastAPI(title="PR4Docs", lifespan=lifespan)
 
+    # status stays awaiting_approval until a resumed run reaches its next node, so the
+    # status check alone cannot stop two decisions racing. In-process only: running
+    # several workers would need this in the database instead.
+    deciding: set[str] = set()
+    deciding_lock = threading.Lock()
+
     # sync def, not async: graph.invoke blocks on an editor subprocess and LLM calls, so
     # starlette runs it in a worker thread instead of stalling the event loop
     @app.post("/jobs", response_model=JobView)
@@ -137,17 +144,26 @@ def create_app(
     def decide(
         thread_id: str, decision: Decision, graph: Annotated[Compiled, Depends(get_graph)]
     ) -> JobView:
-        state = _load(graph, thread_id)
-        if state.get("status") != "awaiting_approval":
-            raise HTTPException(
-                409, f"job {thread_id} is {state.get('status')}, not awaiting review"
-            )
+        with deciding_lock:
+            if thread_id in deciding:
+                raise HTTPException(409, f"a decision for job {thread_id} is already in progress")
+            deciding.add(thread_id)
 
-        resumed = graph.invoke(
-            Command(resume={"approved": decision.approved, "feedback": decision.feedback}),
-            _config(thread_id),
-        )
-        return _view(thread_id, cast(PR4DocsState, resumed))
+        try:
+            state = _load(graph, thread_id)
+            if state.get("status") != "awaiting_approval":
+                raise HTTPException(
+                    409, f"job {thread_id} is {state.get('status')}, not awaiting review"
+                )
+
+            resumed = graph.invoke(
+                Command(resume={"approved": decision.approved, "feedback": decision.feedback}),
+                _config(thread_id),
+            )
+            return _view(thread_id, cast(PR4DocsState, resumed))
+        finally:
+            with deciding_lock:
+                deciding.discard(thread_id)
 
     @app.get("/jobs/{thread_id}/download")
     def download(thread_id: str, graph: Annotated[Compiled, Depends(get_graph)]) -> FileResponse:
