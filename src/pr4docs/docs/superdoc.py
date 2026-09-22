@@ -7,7 +7,7 @@ nodes stay testable against a fake and the SDK's shapes stay in one place.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -242,18 +242,32 @@ class DocumentSession:
 
 
 @contextmanager
+def _session(client: Any, path: Path) -> Iterator[DocumentSession]:
+    """One document session, with SDK errors normalized — nothing outside this module
+    should have to know what a SuperDocError is."""
+    try:
+        doc = client.open({"doc": str(path)})
+    except SuperDocError as exc:
+        raise DocumentError(f"could not open {path.name} in the editor: {exc}") from exc
+
+    try:
+        yield DocumentSession(doc)
+    finally:
+        try:
+            doc.close({"discard": True})
+        except SuperDocError as exc:
+            raise DocumentError(f"could not close {path.name} in the editor: {exc}") from exc
+
+
+@contextmanager
 def open_document(path: Path) -> Iterator[DocumentSession]:
     """Open `path` on an editor process of its own, for one-off use.
 
     The app shares one process via `DocumentHost` instead: starting one costs seconds,
     and four overlapping starts exceed the SDK's startup timeout.
     """
-    with SuperDocClient() as client:
-        doc = client.open({"doc": str(path)})
-        try:
-            yield DocumentSession(doc)
-        finally:
-            doc.close({"discard": True})
+    with SuperDocClient() as client, _session(client, path) as session:
+        yield session
 
 
 # starts measured 1.6-4.6s alone and ~8s with four at once, against an SDK default of 5s.
@@ -274,20 +288,18 @@ class DocumentHost:
 
     def start(self) -> None:
         """Connect up front, so a broken editor fails the app instead of the first job."""
-        self._client.connect()
+        try:
+            self._client.connect()
+        except SuperDocError as exc:
+            raise DocumentError(f"could not start the editor process: {exc}") from exc
 
     def close(self) -> None:
         self._client.dispose()
 
-    @contextmanager
-    def open(self, path: Path) -> Iterator[DocumentSession]:
+    def open(self, path: Path) -> AbstractContextManager[DocumentSession]:
         """One document session. Anything that must survive the human-approval pause
         has to be saved to disk before this context exits."""
-        doc = self._client.open({"doc": str(path)})
-        try:
-            yield DocumentSession(doc)
-        finally:
-            doc.close({"discard": True})
+        return _session(self._client, path)
 
     def __enter__(self) -> DocumentHost:
         self.start()

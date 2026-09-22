@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from superdoc import SuperDocError
 
-from pr4docs.docs.superdoc import DocumentHost
+from pr4docs.docs.superdoc import DocumentError, DocumentHost
 
 
 class StubDoc:
@@ -91,6 +92,33 @@ def test_the_host_starts_the_process_before_any_request(stub_client: type[StubCl
     """Started at boot, so a broken editor fails the app rather than the first job."""
     with DocumentHost():
         assert stub_client.instances[0].connected == 1
+
+
+def test_a_failed_open_is_reported_as_a_document_error(
+    stub_client: type[StubClient], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SDK errors stay inside this module: the graph and the API only know DocumentError."""
+
+    def explode(self: StubClient, params: dict[str, Any]) -> StubDoc:
+        raise SuperDocError("Host watchdog timed out.", code="HOST_HANDSHAKE_FAILED")
+
+    monkeypatch.setattr(StubClient, "open", explode)
+    host = DocumentHost()
+
+    with host, pytest.raises(DocumentError, match="watchdog"), host.open(tmp_path / "a.docx"):
+        pass
+
+
+def test_a_failed_start_is_reported_as_a_document_error(
+    stub_client: type[StubClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def explode(self: StubClient) -> None:
+        raise SuperDocError("Failed to start host process", code="HOST_HANDSHAKE_FAILED")
+
+    monkeypatch.setattr(StubClient, "connect", explode)
+
+    with pytest.raises(DocumentError, match="start"):
+        DocumentHost().start()
 
 
 def test_the_startup_timeout_leaves_room_for_a_slow_start(stub_client: type[StubClient]) -> None:
