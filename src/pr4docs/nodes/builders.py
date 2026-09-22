@@ -188,10 +188,14 @@ def make_approval(deps: Deps) -> Node:
             approved = bool(decision.get("approved"))
             feedback = decision.get("feedback")
 
+        # the work a decision triggers takes as long as the first proposal did, and it
+        # runs after this node returns — without these the job reads as still awaiting
+        # review the whole time, as if the decision had never landed
         if approved:
-            return {"approved": True}
+            return {"approved": True, "status": "finalizing"}
         return {
             "approved": False,
+            "status": "revising",
             # a person clicking reject is not a runaway loop, so the retry budget resets
             "attempts": 0,
             "revise_feedback": feedback or "the reviewer rejected the changes without a reason",

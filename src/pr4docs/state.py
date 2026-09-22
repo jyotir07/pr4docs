@@ -10,7 +10,7 @@ from __future__ import annotations
 import operator
 from typing import Annotated, Any, Literal, TypedDict
 
-Status = Literal["planning", "awaiting_approval", "finalized", "failed"]
+Status = Literal["planning", "awaiting_approval", "revising", "finalizing", "finalized", "failed"]
 
 
 class PR4DocsState(TypedDict, total=False):
