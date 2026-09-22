@@ -222,6 +222,86 @@ def test_downloading_before_approval_is_rejected(client, sample_docx):
     assert "awaiting_approval" in response.json()["detail"]
 
 
+def test_a_job_being_revised_reports_revising(store, settings, sample_docx):
+    """A reject takes as long as the first proposal did; reporting awaiting_approval for
+    all of it tells the reviewer their decision never landed."""
+    replanning = threading.Event()
+    release = threading.Event()
+
+    def planner(*, request, outline, feedback):
+        if feedback is not None:
+            replanning.set()
+            release.wait(10)
+        return [edit("s1", "b4")]
+
+    deps = Deps(
+        planner=planner,
+        composer=ScriptedComposer(),
+        validator=ScriptedValidator([passing()]),
+        open_document=store.opener(),
+        settings=settings,
+    )
+
+    with TestClient(create_app(deps=deps, settings=settings)) as client:
+        thread_id = upload(client, sample_docx).json()["thread_id"]
+
+        worker = threading.Thread(
+            target=lambda: client.post(
+                f"/jobs/{thread_id}/decision", json={"approved": False, "feedback": "no"}
+            )
+        )
+        worker.start()
+        try:
+            assert replanning.wait(10)
+            during = client.get(f"/jobs/{thread_id}").json()["status"]
+        finally:
+            release.set()
+            worker.join(10)
+
+        assert during == "revising"
+        assert client.get(f"/jobs/{thread_id}").json()["status"] == "awaiting_approval"
+
+
+def test_a_job_being_finalized_reports_finalizing(store, settings, sample_docx):
+    """Only finalize reopens the working file, so gating on it pauses inside finalize."""
+    finalizing = threading.Event()
+    release = threading.Event()
+    real = store.opener()
+
+    @contextmanager
+    def gated_open(path: Path):
+        if "working" in str(path):
+            finalizing.set()
+            release.wait(10)
+        with real(path) as session:
+            yield session
+
+    deps = Deps(
+        planner=ScriptedPlanner([[edit("s1", "b4")]]),
+        composer=ScriptedComposer(),
+        validator=ScriptedValidator([passing()]),
+        open_document=gated_open,
+        settings=settings,
+    )
+
+    with TestClient(create_app(deps=deps, settings=settings)) as client:
+        thread_id = upload(client, sample_docx).json()["thread_id"]
+
+        worker = threading.Thread(
+            target=lambda: client.post(f"/jobs/{thread_id}/decision", json={"approved": True})
+        )
+        worker.start()
+        try:
+            assert finalizing.wait(10)
+            during = client.get(f"/jobs/{thread_id}").json()["status"]
+        finally:
+            release.set()
+            worker.join(10)
+
+        assert during == "finalizing"
+        assert client.get(f"/jobs/{thread_id}").json()["status"] == "finalized"
+
+
 def failing_opener(store, fails_on=""):
     """Wraps the fake store and refuses to open paths containing `fails_on`."""
     real = store.opener()
