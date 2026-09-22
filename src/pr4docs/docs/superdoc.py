@@ -243,10 +243,10 @@ class DocumentSession:
 
 @contextmanager
 def open_document(path: Path) -> Iterator[DocumentSession]:
-    """Open `path` for one unit of work.
+    """Open `path` on an editor process of its own, for one-off use.
 
-    The session cannot outlive the process, so anything that must survive the
-    human-approval pause has to be saved to disk before this context exits.
+    The app shares one process via `DocumentHost` instead: starting one costs seconds,
+    and four overlapping starts exceed the SDK's startup timeout.
     """
     with SuperDocClient() as client:
         doc = client.open({"doc": str(path)})
@@ -254,3 +254,44 @@ def open_document(path: Path) -> Iterator[DocumentSession]:
             yield DocumentSession(doc)
         finally:
             doc.close({"discard": True})
+
+
+# starts measured 1.6-4.6s alone and ~8s with four at once, against an SDK default of 5s.
+# The host starts once at boot, so this only has to cover a slow machine, not a pile-up.
+STARTUP_TIMEOUT_MS = 30_000
+
+
+class DocumentHost:
+    """One editor process, shared by every job for the lifetime of the app.
+
+    The SDK serialises calls on a client, so sharing one is safe but not parallel —
+    document operations are short next to the LLM calls around them. It also restarts
+    the process if it dies, which a client spawned per call could never do.
+    """
+
+    def __init__(self, startup_timeout_ms: int = STARTUP_TIMEOUT_MS) -> None:
+        self._client = SuperDocClient(startup_timeout_ms=startup_timeout_ms)
+
+    def start(self) -> None:
+        """Connect up front, so a broken editor fails the app instead of the first job."""
+        self._client.connect()
+
+    def close(self) -> None:
+        self._client.dispose()
+
+    @contextmanager
+    def open(self, path: Path) -> Iterator[DocumentSession]:
+        """One document session. Anything that must survive the human-approval pause
+        has to be saved to disk before this context exits."""
+        doc = self._client.open({"doc": str(path)})
+        try:
+            yield DocumentSession(doc)
+        finally:
+            doc.close({"discard": True})
+
+    def __enter__(self) -> DocumentHost:
+        self.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()

@@ -4,11 +4,13 @@ Marked `contract`: each test spawns the embedded editor process, so these are ex
 from the default run. Use `pytest -m contract` to check the SDK still behaves.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from pr4docs.docs.superdoc import DocumentError, EditStep, open_document
+from pr4docs.docs.superdoc import DocumentError, DocumentHost, EditStep, open_document
+from tests.conftest import FIXTURE_PARAGRAPHS, write_sample_docx
 
 pytestmark = pytest.mark.contract
 
@@ -112,6 +114,21 @@ def test_tracked_changes_survive_a_process_boundary(sample_docx: Path, tmp_path:
         assert done.changes() == []
         assert CONCISE in done.text()
         assert "not without cost" not in done.text()
+
+
+def test_one_host_serves_overlapping_opens(tmp_path: Path):
+    """Four overlapping opens each started their own editor process and blew past the
+    SDK's 5s startup timeout. Sharing one already-started process removes the spawn."""
+    paths = [write_sample_docx(tmp_path / f"s{i}.docx") for i in range(4)]
+
+    def outline_size(path: Path) -> int:
+        with host.open(path) as session:
+            return len(session.outline())
+
+    with DocumentHost() as host, ThreadPoolExecutor(len(paths)) as pool:
+        sizes = list(pool.map(outline_size, paths))
+
+    assert all(size == len(FIXTURE_PARAGRAPHS) for size in sizes)
 
 
 def test_reject_restores_the_original_text(sample_docx: Path, tmp_path: Path):

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Protocol
 
 from pr4docs.config import Settings, get_settings
-from pr4docs.docs.superdoc import Block, Change, DocumentSession, StepOp, open_document
+from pr4docs.docs.superdoc import Block, Change, DocumentSession, StepOp
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,9 @@ class Deps:
     planner: EditPlanner
     composer: TextComposer
     validator: ResultValidator
-    open_document: DocumentOpener = open_document
+    # no default: the app shares one editor process, and falling back to a per-call one
+    # silently would undo that
+    open_document: DocumentOpener
     settings: Settings = field(default_factory=get_settings)
 
 
