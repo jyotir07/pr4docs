@@ -130,7 +130,11 @@ Doing that spike *before* writing any agent code was the single best process dec
 
 **One asymmetry worth documenting.** A *malformed* plan raises an exception, while a *well-formed but unsatisfiable* plan returns `valid: false` with failures. Both are the same event from the agent's point of view — "this plan is no good, here's why, try again" — so I normalize them into one shape at the SDK boundary. Without that, the retry loop only self-corrects for half its failure modes, which is a subtle way to half-build a feature. Surfacing both as failures, or documenting the split prominently, would help.
 
-**An open question:** the SDK manages a headless editor process, and I could not determine from the docs whether the intended pattern under a long-lived server is one client per request or a shared pool. I've shipped one client per request and flagged concurrency as untested rather than guess. This is the thing I'd most like a maintainer's opinion on.
+**Client lifetime under a long-lived server is not documented, and it matters.** The SDK manages a headless editor process, and the docs don't say whether a server should start one per request or share one. I started by opening a client wherever a node needed the document, then measured: a start costs 1.6–4.6s alone, and four overlapping starts take ~6.4s each — past the SDK's own 5s startup timeout, so they fail. Four concurrent jobs was enough to break it.
+
+So the app now starts one client at boot and opens a session per document on it. The SDK serialises calls on a client, which makes sharing safe but not parallel; document operations are short (~0.3s) next to the LLM calls around them, so queueing on one process costs little, and a pool is a small change if that stops being true. Over 200 sessions on one long-lived process, memory settled around 400MB and per-session time held flat.
+
+A sentence in the docs naming the intended pattern would have saved the measurement — and the default startup timeout is worth revisiting, since it is below what a cold start costs on a normal laptop.
 
 **License:** `superdoc-sdk` is AGPL-3.0. Fine for a personal project; distributing this as a product would require a commercial license, and I'd want to talk before doing that.
 
@@ -138,7 +142,8 @@ Doing that spike *before* writing any agent code was the single best process dec
 
 ## What isn't solved
 
-- **Concurrency is untested**, per above. It should not take parallel jobs until it's measured.
+- **Document work is serialised**, per above — one editor process, shared. Fine while the LLM calls dominate; a pool is the next step if jobs start queueing on it.
+- **One process only.** A job in progress is guarded in memory, so more than one server worker would need that guard in the database.
 - **`SqliteSaver`** is the checkpointer. Swapping to Postgres is a one-line change at graph-compile time — that ordering was deliberate, not an accident.
 - **No auth, no retention policy.** Uploads accumulate and every job is reachable by anyone who can reach the port.
 - **One document, one request per job.** No batching, no multi-document operations.
@@ -149,4 +154,4 @@ Doing that spike *before* writing any agent code was the single best process dec
 
 Python 3.11, LangGraph (state machine, checkpointing, `interrupt()`), LangChain (provider-agnostic model resolution, structured output), FastAPI, SuperDoc SDK, SQLite.
 
-43 tests. 33 run by default with no API key and no editor subprocess — the SDK sits behind a single wrapper module and the three LLM roles are injected, so the entire state machine, every retry branch and the approval pause included, is testable with fakes. The remaining 10 are marked `contract` (real SDK) and `live` (real model) and are excluded from the default run.
+56 tests. 45 run by default with no API key and no editor subprocess — the SDK sits behind a single wrapper module and the three LLM roles are injected, so the entire state machine, every retry branch and the approval pause included, is testable with fakes. The remaining 11 are marked `contract` (real SDK) and `live` (real model) and are excluded from the default run.
