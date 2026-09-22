@@ -4,6 +4,7 @@ requests and surviving a restart of the app."""
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 from pr4docs.api import create_app
 from pr4docs.config import Settings
 from pr4docs.deps import Deps
+from pr4docs.docs.superdoc import DocumentError
 from tests.fakes import (
     FakeDocumentStore,
     ScriptedComposer,
@@ -218,6 +220,53 @@ def test_downloading_before_approval_is_rejected(client, sample_docx):
 
     assert response.status_code == 409
     assert "awaiting_approval" in response.json()["detail"]
+
+
+def failing_opener(store, fails_on=""):
+    """Wraps the fake store and refuses to open paths containing `fails_on`."""
+    real = store.opener()
+
+    @contextmanager
+    def _open(path: Path):
+        if fails_on in str(path):
+            raise DocumentError("the editor process is gone")
+        with real(path) as session:
+            yield session
+
+    return _open
+
+
+def test_an_unusable_editor_fails_the_upload_with_503(store, settings, sample_docx):
+    deps = Deps(
+        planner=ScriptedPlanner([[edit("s1", "b4")]]),
+        composer=ScriptedComposer(),
+        validator=ScriptedValidator([passing()]),
+        open_document=failing_opener(store),
+        settings=settings,
+    )
+
+    with TestClient(create_app(deps=deps, settings=settings)) as failing:
+        response = upload(failing, sample_docx)
+
+    assert response.status_code == 503
+    assert "editor" in response.json()["detail"]
+
+
+def test_an_unusable_editor_fails_the_decision_with_503(store, settings, sample_docx):
+    """Finalize reopens the working file, so this fails after the diff was approved."""
+    deps = Deps(
+        planner=ScriptedPlanner([[edit("s1", "b4")]]),
+        composer=ScriptedComposer(),
+        validator=ScriptedValidator([passing()]),
+        open_document=failing_opener(store, fails_on="working"),
+        settings=settings,
+    )
+
+    with TestClient(create_app(deps=deps, settings=settings)) as failing:
+        thread_id = upload(failing, sample_docx).json()["thread_id"]
+        response = failing.post(f"/jobs/{thread_id}/decision", json={"approved": True})
+
+    assert response.status_code == 503
 
 
 def test_non_docx_upload_is_rejected(client, tmp_path):

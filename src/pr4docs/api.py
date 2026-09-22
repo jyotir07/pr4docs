@@ -10,8 +10,8 @@ from __future__ import annotations
 import sqlite3
 import threading
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from pr4docs.config import Settings, get_settings
 from pr4docs.deps import Deps
-from pr4docs.docs.superdoc import DocumentHost
+from pr4docs.docs.superdoc import DocumentError, DocumentHost
 from pr4docs.graph import Compiled, build_graph
 from pr4docs.state import PR4DocsState, initial_state
 
@@ -57,6 +57,16 @@ def _view(thread_id: str, state: PR4DocsState) -> JobView:
         errors=state.get("errors", []),
         output_ready=bool(state.get("output_path")),
     )
+
+
+@contextmanager
+def _editor_failures_are_503() -> Iterator[None]:
+    """A dead or unreachable editor is the service being unavailable, not a bad request.
+    The checkpoint is untouched, so the same call can be retried."""
+    try:
+        yield
+    except DocumentError as exc:
+        raise HTTPException(503, f"the editor is unavailable: {exc}") from exc
 
 
 def _config(thread_id: str) -> RunnableConfig:
@@ -149,7 +159,8 @@ def create_app(
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(payload)
 
-        state = graph.invoke(initial_state(str(source), request), _config(thread_id))
+        with _editor_failures_are_503():
+            state = graph.invoke(initial_state(str(source), request), _config(thread_id))
         return _view(thread_id, cast(PR4DocsState, state))
 
     @app.get("/jobs/{thread_id}", response_model=JobView)
@@ -172,10 +183,11 @@ def create_app(
                     409, f"job {thread_id} is {state.get('status')}, not awaiting review"
                 )
 
-            resumed = graph.invoke(
-                Command(resume={"approved": decision.approved, "feedback": decision.feedback}),
-                _config(thread_id),
-            )
+            with _editor_failures_are_503():
+                resumed = graph.invoke(
+                    Command(resume={"approved": decision.approved, "feedback": decision.feedback}),
+                    _config(thread_id),
+                )
             return _view(thread_id, cast(PR4DocsState, resumed))
         finally:
             with deciding_lock:
