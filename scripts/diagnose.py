@@ -22,6 +22,7 @@ from conftest import write_sample_docx  # noqa: E402
 from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 
 from pr4docs.config import Settings  # noqa: E402
+from pr4docs.docs.superdoc import DocumentHost  # noqa: E402
 from pr4docs.graph import build_graph  # noqa: E402
 from pr4docs.roles import build_deps  # noqa: E402
 from pr4docs.state import initial_state  # noqa: E402
@@ -166,19 +167,20 @@ def main():
     docx = write_sample_docx(tmp / "sample.docx")
 
     rec = Recorder()
-    base = build_deps()
-    deps = replace(
-        base,
-        planner=LoggingPlanner(base.planner, rec),
-        composer=LoggingComposer(base.composer, rec),
-        validator=LoggingValidator(base.validator, rec),
-        settings=Settings(storage=tmp, max_attempts=3),
-    )
+    with DocumentHost() as host:
+        base = build_deps(host.open)
+        deps = replace(
+            base,
+            planner=LoggingPlanner(base.planner, rec),
+            composer=LoggingComposer(base.composer, rec),
+            validator=LoggingValidator(base.validator, rec),
+            settings=Settings(storage=tmp, max_attempts=3),
+        )
 
-    graph = build_graph(deps, checkpointer=InMemorySaver())
-    result = graph.invoke(
-        initial_state(str(docx), REQUEST), {"configurable": {"thread_id": "diag"}}
-    )
+        graph = build_graph(deps, checkpointer=InMemorySaver())
+        result = graph.invoke(
+            initial_state(str(docx), REQUEST), {"configurable": {"thread_id": "diag"}}
+        )
 
     print_summary(rec, result)
 

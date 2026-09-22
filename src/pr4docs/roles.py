@@ -13,7 +13,7 @@ from typing import Literal, TypeVar
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 
-from pr4docs.deps import Deps, PlannedEdit, Validation
+from pr4docs.deps import Deps, DocumentOpener, PlannedEdit, Validation
 from pr4docs.docs.superdoc import Block, Change, StepOp
 from pr4docs.llm import RETRY_ATTEMPTS, get_model
 
@@ -210,11 +210,12 @@ class LLMValidator:
         return Validation(passed=result.passed, reason=result.reason)
 
 
-def build_deps() -> Deps:
-    """The production wiring: real models, real documents."""
+def build_deps(open_document: DocumentOpener) -> Deps:
+    """The production wiring: real models, and documents on the caller's editor process."""
     model = get_model()
     return Deps(
         planner=LLMPlanner(model),
         composer=LLMComposer(model),
         validator=LLMValidator(model),
+        open_document=open_document,
     )

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from pr4docs.config import Settings, get_settings
 from pr4docs.deps import Deps
+from pr4docs.docs.superdoc import DocumentHost
 from pr4docs.graph import Compiled, build_graph
 from pr4docs.state import PR4DocsState, initial_state
 
@@ -99,9 +100,24 @@ def create_app(
 
         resolved_settings.ensure_dirs()
         saver = checkpointer or open_checkpointer(resolved_settings)
-        app.state.graph = build_graph(deps or build_deps(), checkpointer=saver)
+
+        # one editor process for the whole app, started here so a broken editor fails
+        # startup rather than the first job. Injected deps bring their own opener.
+        host = None
+        if deps is None:
+            host = DocumentHost()
+            host.start()
+            resolved_deps = build_deps(host.open)
+        else:
+            resolved_deps = deps
+
+        app.state.graph = build_graph(resolved_deps, checkpointer=saver)
         app.state.settings = resolved_settings
-        yield
+        try:
+            yield
+        finally:
+            if host is not None:
+                host.close()
 
     app = FastAPI(title="PR4Docs", lifespan=lifespan)
 

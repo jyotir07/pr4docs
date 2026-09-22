@@ -144,8 +144,8 @@ Two seams make the whole thing testable. `docs/superdoc.py` is the single bounda
 ## Development
 
 ```bash
-uv run pytest                 # 34 tests, no API key, no subprocess, ~seconds
-uv run pytest -m contract     # 8 tests against the real SuperDoc SDK; slow
+uv run pytest                 # 39 tests, no API key, no subprocess, ~seconds
+uv run pytest -m contract     # 9 tests against the real SuperDoc SDK; slow
 uv run pytest -m live         # 2 tests against the real LLM; costs money
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                   # strict, no ignores in the codebase
@@ -169,7 +169,7 @@ On the model: `gpt-4o-mini` cannot hold a quantitative rewrite target. On "40% s
 
 ## Known limits
 
-- **Concurrency is untested.** The SDK manages a headless editor process, and one client per request versus a pool is unresolved. Don't put concurrent jobs through this without measuring it first.
+- **Document work is serialised.** The app shares one editor process, started at boot. Starting one costs 1.6–4.6s, and four overlapping starts exceeded the SDK's 5s startup timeout — so a process per request was not viable. The SDK serialises calls on a client, so document operations queue behind each other at ~0.3s apiece, which is small next to the LLM calls. If jobs start waiting on it, a pool of hosts is the next step.
 - **`SqliteSaver`.** Swapping to `PostgresSaver` is a one-line change where the graph is compiled; that ordering was deliberate.
 - **No auth, no cleanup.** `storage/` grows without bound and every job is reachable by anyone who can reach the port.
 - **`superdoc-sdk` is AGPL-3.0.** Fine for a personal or portfolio project; distributing this as a product needs a commercial license.
