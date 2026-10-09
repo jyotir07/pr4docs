@@ -137,6 +137,10 @@ src/pr4docs/
   config.py         settings
   nodes/            node implementations
   docs/superdoc.py  the ONLY module that imports the SDK
+scripts/
+  diagnose.py       instruments every boundary in one real run; hits the real model
+docs/
+  case-study.md     the write-up: the design, what went wrong first, what was measured
 ```
 
 Two seams make the whole thing testable. `docs/superdoc.py` is the single boundary over SuperDoc, and `Deps` injects the three LLM roles — so the entire state machine, every branch and retry and the approval pause included, runs in tests with no API key and no editor subprocess.
