@@ -35,7 +35,7 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 class Decision(BaseModel):
     approved: bool
     feedback: str | None = Field(
-        default=None, description="Why it was rejected. Fed straight to the planner."
+        default=None, description="Why it was rejected. Fed to both the planner and the composer."
     )
 
 
