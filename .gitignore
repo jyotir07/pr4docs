@@ -13,3 +13,6 @@ build/
 # runtime artifacts: uploads, tracked-change working copies, finalized output
 storage/
 *.sqlite*
+
+# written by the README quickstart
+/sample.docx
