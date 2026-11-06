@@ -1,6 +1,6 @@
 """Model access. The only module that knows which provider is in play.
 
-Everything else names a model with a provider-prefixed string ("openai:gpt-4o-mini",
+Everything else names a model with a provider-prefixed string ("openai:gpt-4o",
 "anthropic:claude-...") and never imports a provider SDK.
 """
 
